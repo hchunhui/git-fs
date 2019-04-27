@@ -650,7 +650,7 @@ int main(int argc, char *argv[])
 	signal(SIGABRT, dump_trace);
 
 	/* Initalize thread storage in libgit2 */
-	git_threads_init();
+	git_libgit2_init();
 
 	struct gitfs_data *d = calloc(1, sizeof(struct gitfs_data));
 	if (!d) {
@@ -806,7 +806,7 @@ int main(int argc, char *argv[])
 	free(d);
 
 	/* Clean up thread storage in libgit2 */
-	git_threads_shutdown();
+	git_libgit2_shutdown();
 
 	/* Allow git_init to change our exit code */
 	return d->retval;
