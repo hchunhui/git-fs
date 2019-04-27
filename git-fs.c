@@ -466,27 +466,9 @@ void gitfs_destroy(void *private_data) {
 
 void* gitfs_init(struct fuse_conn_info *conn) {
 	char sha[GIT_OID_HEXSZ + 1];
-	/* Start by chrooting into the git repository. Doing this allows
-	 * git-fs to be started from within initrd and not break if
-	 * mount points are shuffled around, causing the location of the
-	 * git repository to change. By chrooting into the .git dir,
-	 * anything can happen, except for unmounting it completely.
-	 * Note that we can't do this chroot in main(), since fuse_main
-	 * needs /dev/fuse and possibly /dev/null and others too... */
 	struct gitfs_data *d = (struct gitfs_data *)(fuse_get_context()->private_data);
-	debug("chrooting to %s\n", d->repo_path);
-
-	if (chroot(d->repo_path) < 0) {
-		error("Failed to chroot to %s: %s\n", d->repo_path, strerror(errno));
-		goto err;
-	}
-	if (chdir("/") < 0) {
-		error("Failed to chdir to /: %s\n", strerror(errno));
-		goto err;
-	}
-
 	debug("opening repo after fuse_main\n");
-	if (git_repository_open(&d->repo, "/") < 0) {
+	if (git_repository_open(&d->repo, d->repo_path) < 0) {
 		error("Cannot open git repository: %s\n", giterr_last()->message);
 		goto err;
 	}
