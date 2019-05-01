@@ -606,11 +606,69 @@ static int gitfs_opt_proc(void *data, const char *arg, int key, struct fuse_args
 	return 1;
 }
 
+static git_tree *gitfs_get_tree(git_object *obj, struct gitfs_data *d)
+{
+	git_tree *tree;
+	git_commit *commit;
+	git_tag *tag;
+	git_object *obj2;
+	char sha[GIT_OID_HEXSZ + 1];
+
+	switch (git_object_type(obj)) {
+		case GIT_OBJ_COMMIT:
+			commit = (git_commit*)obj;
+			git_oid_fmt(sha, git_commit_id(commit));
+			sha[GIT_OID_HEXSZ] = '\0';
+			debug("using commit %s\n", sha);
+
+			/* rev points to a commit, lookup corresponding
+			 * tree */
+			if (git_commit_tree(&tree, commit) < 0) {
+				git_object_free(obj);
+				return NULL;
+			}
+			d->commit_time = git_commit_time(commit);
+
+			/* Export the commit id through a magic file */
+			if (gitfs_init_oid_entry(d, "/.git-fs-commit-id", git_commit_id(commit)) < 0) {
+				git_object_free(obj);
+				return NULL;
+			}
+			git_object_free(obj);
+			return tree;
+			break;
+		case GIT_OBJ_TREE:
+			/* rev points to a tree, just use it */
+			tree = (git_tree*)obj;
+
+			/* Trees don't store any time information, so
+			 * just use the current time (better than using
+			 * 0, which can confuse programs such as tar).
+			 * */
+			d->commit_time = time(NULL);
+			return tree;
+			break;
+		case GIT_OBJ_TAG:
+			tag = (git_tag*)obj;
+			if (git_tag_target(&obj2, tag) < 0) {
+				git_object_free(obj);
+				return NULL;
+			}
+			git_object_free(obj);
+			tree = gitfs_get_tree(obj2, d);
+			return tree;
+			break;
+		default:
+			git_object_free(obj);
+			return NULL;
+	}
+}
+
 int main(int argc, char *argv[])
 {
 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
 	struct stat st;
-	char sha[41];
+	char sha[GIT_OID_HEXSZ + 1];
 
 	// When runing form initrd, mark ourselves as a storage daemon
 	// that runs from initrd for systemd. This prevents
@@ -670,44 +728,9 @@ int main(int argc, char *argv[])
 	if (git_revparse_single(&obj, repo, rev) < 0)
 		return error("Failed to resolve rev: %s\n", rev), 1;
 
-	git_tree *tree;
-	git_commit *commit;
-	switch (git_object_type(obj)) {
-		case GIT_OBJ_COMMIT:
-			commit = (git_commit*)obj;
-			git_oid_fmt(sha, git_commit_id(commit));
-			sha[GIT_OID_HEXSZ] = '\0';
-			debug("using commit %s\n", sha);
-
-			/* rev points to a commit, lookup corresponding
-			 * tree */
-			if (git_commit_tree(&tree, commit) < 0) {
-				return error("Failed to lookup tree for rev: %s\n", rev), 1;
-			}
-			d->commit_time = git_commit_time(commit);
-
-			/* Export the commit id through a magic file */
-			if (gitfs_init_oid_entry(d, "/.git-fs-commit-id", git_commit_id(commit)) < 0)
-				return 1;
-			git_object_free(obj);
-			break;
-		case GIT_OBJ_TREE:
-			/* rev points to a tree, just use it */
-			tree = (git_tree*)obj;
-
-			git_oid_fmt(sha, git_tree_id(tree));
-			sha[GIT_OID_HEXSZ] = '\0';
-			debug("using commit %s\n", sha);
-
-			/* Trees don't store any time information, so
-			 * just use the current time (better than using
-			 * 0, which can confuse programs such as tar).
-			 * */
-			d->commit_time = time(NULL);
-			break;
-		default:
-			return error("rev does not point to a tree or commit: %s\n", rev), 1;
-	}
+	git_tree *tree = gitfs_get_tree(obj, d);
+	if (tree == NULL)
+		return error("Failed to lookup tree for rev: %s\n", rev), 1;
 
 	git_oid_fmt(sha, git_tree_id(tree));
 	sha[GIT_OID_HEXSZ] = '\0';
